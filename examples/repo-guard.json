@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "repo_id": "my-service",
+  "repo_type": "service",
+  "description": "Example Repo Guard manifest. Drop this in your repo root as repo-guard.json.",
+  "enforcement": "strict",
+  "expected_structure": {
+    "src/": {
+      "required": true,
+      "purpose": "Application source code"
+    },
+    "tests/": {
+      "required": true,
+      "purpose": "Test suite"
+    },
+    "README.md": {
+      "required": true,
+      "purpose": "Project documentation"
+    },
+    "docs/": {
+      "required": false,
+      "purpose": "Extended documentation"
+    }
+  },
+  "file_rules": {
+    "naming_conventions": {
+      "python_modules": "snake_case",
+      "test_files": "test_*.py"
+    },
+    "forbidden_patterns": [
+      ".*secret.*",
+      ".*password.*",
+      "\\.env$",
+      "\\.pem$",
+      ".*\\.key$",
+      ".*credentials.*"
+    ]
+  },
+  "migration_rules": {
+    "legacy_path": "legacy/",
+    "review_needed_path": "review_needed/",
+    "require_approval": true
+  }
+}
