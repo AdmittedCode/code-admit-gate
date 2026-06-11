@@ -11,11 +11,11 @@ inputs:
     required: false
     default: "."
   manifest:
-    description: "Explicit path to the manifest. Auto-discovered (repo-guard.json) if omitted."
+    description: "Explicit path to the manifest. Auto-discovered as repo-guard.json if omitted."
     required: false
     default: ""
   fail-on-drift:
-    description: "Fail the job (exit 1) if any error-level violations are found."
+    description: "Fail the job if error-level violations are found."
     required: false
     default: "true"
   format:
@@ -49,29 +49,51 @@ runs:
     - name: Run Repo Guard
       id: guard
       shell: bash
-      env:
-        REPORT_PATH: ${{ inputs.report-path }}
       run: |
         set -o pipefail
-        GUARD="${{ github.action_path }}/src/repo_guard.py"
-        ARGS=(--repo "${{ inputs.repo-path }}" --format "${{ inputs.format }}" --output "${{ inputs.report-path }}")
-        if [ -n "${{ inputs.manifest }}" ]; then ARGS+=(--manifest "${{ inputs.manifest }}"); fi
-        if [ "${{ inputs.fail-on-drift }}" = "true" ]; then ARGS+=(--fail-on-drift); fi
 
-        GUARD_EXIT=0
-        python "$GUARD" "${ARGS[@]}" || GUARD_EXIT=$?
+        GUARD="${{ github.action_path }}/src/repo_guard.py"
+        if [ ! -f "$GUARD" ]; then
+          echo "Repo Guard validator not found at $GUARD" >&2
+          exit 2
+        fi
+
+        ARGS=(--repo "${{ inputs.repo-path }}" --format "${{ inputs.format }}" --output "${{ inputs.report-path }}")
+
+        if [ -n "${{ inputs.manifest }}" ]; then
+          ARGS+=(--manifest "${{ inputs.manifest }}")
+        fi
+
+        if [ "${{ inputs.fail-on-drift }}" = "true" ]; then
+          ARGS+=(--fail-on-drift)
+        fi
+
+        set +e
+        python "$GUARD" "${ARGS[@]}" | tee guard_output.txt
+        GUARD_EXIT=${PIPESTATUS[0]}
+        set -e
 
         if [ -f "${{ inputs.report-path }}" ]; then
-          python - <<'PY' >> "$GITHUB_OUTPUT"
-        import json, os
-        r = json.load(open(os.environ["REPORT_PATH"]))
-        s = r.get("summary", {})
-        print(f"errors={s.get('errors',0)}")
-        print(f"warnings={s.get('warnings',0)}")
-        print(f"status={'ACTIVE' if r.get('manifest_found') else 'DORMANT'}")
+          REPORT_PATH="${{ inputs.report-path }}" python - <<'PY' >> "$GITHUB_OUTPUT"
+        import json
+        import os
+
+        report_path = os.environ["REPORT_PATH"]
+        with open(report_path, "r", encoding="utf-8") as handle:
+            report = json.load(handle)
+
+        summary = report.get("summary", {})
+        print(f"errors={summary.get('errors', 0)}")
+        print(f"warnings={summary.get('warnings', 0)}")
+        print(f"status={'ACTIVE' if report.get('manifest_found') else 'DORMANT'}")
         PY
+        else
+          echo "errors=0" >> "$GITHUB_OUTPUT"
+          echo "warnings=0" >> "$GITHUB_OUTPUT"
+          echo "status=UNKNOWN" >> "$GITHUB_OUTPUT"
         fi
-        exit $GUARD_EXIT
+
+        exit "$GUARD_EXIT"
 
     - name: Upload report
       if: always()
