@@ -1,19 +1,34 @@
 #!/usr/bin/env python3
 """
 Repo Guard — Architecture Validator
-Validates any repository's structure against a declared manifest (repo-guard.json).
-Manifest-driven structural linting, forbidden-pattern blocking, and drift detection.
-Vendor-neutral; no external dependencies (Python 3.8+ stdlib only).
-"""
 
+Manifest-driven structural validation for repositories.
+
+Repo Guard is opt-in:
+- if no manifest is found, it reports DORMANT and does not fail;
+- if a manifest is found, it validates expected structure, forbidden paths,
+  naming drift, and stray files.
+
+No third-party dependencies. Python 3.8+ stdlib only.
+"""
+from __future__ import annotations
+
+import argparse
 import json
 import os
 import re
 import sys
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Any
-from dataclasses import dataclass, field, asdict
-import argparse
+from typing import Any, Dict, List, Optional
+
+
+MANIFEST_NAMES = [
+    "repo-guard.json",
+    "stegverse.architecture.json",
+    "architecture.json",
+    ".architecture.json",
+]
 
 
 @dataclass
@@ -28,92 +43,99 @@ class Violation:
 @dataclass
 class ValidationReport:
     repo_path: str
-    manifest_path: str
+    manifest_path: Optional[str]
     manifest_found: bool
     repo_id: Optional[str] = None
     repo_type: Optional[str] = None
+    manifest: Optional[Dict[str, Any]] = None
     violations: List[Violation] = field(default_factory=list)
     summary: Dict[str, int] = field(default_factory=lambda: {
-        "errors": 0, "warnings": 0, "notices": 0, "total": 0
+        "errors": 0,
+        "warnings": 0,
+        "notices": 0,
+        "total": 0,
     })
-    
-    def add(self, violation: Violation):
+
+    def add(self, violation: Violation) -> None:
         self.violations.append(violation)
-        self.summary[violation.level + "s"] += 1
-        self.summary["total"] += 1
-    
-    def to_json(self) -> str:
-        return json.dumps({
+        key = violation.level + "s"
+        self.summary[key] = self.summary.get(key, 0) + 1
+        self.summary["total"] = self.summary.get("total", 0) + 1
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "schema": "repo_guard.validation_report.v1",
             "repo_path": self.repo_path,
             "manifest_path": self.manifest_path,
             "manifest_found": self.manifest_found,
             "repo_id": self.repo_id,
             "repo_type": self.repo_type,
+            "manifest": self.manifest,
             "summary": self.summary,
-            "violations": [asdict(v) for v in self.violations]
-        }, indent=2)
+            "violations": [asdict(v) for v in self.violations],
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), indent=2, sort_keys=True)
 
 
 class ArchitectureValidator:
-    MANIFEST_NAMES = [
-        "repo-guard.json",
-        "stegverse.architecture.json",
-        "architecture.json",
-        ".architecture.json"
-    ]
-    
     def __init__(self, repo_path: str, manifest_path: Optional[str] = None):
         self.repo_path = Path(repo_path).resolve()
         self.manifest_path = self._discover_manifest(manifest_path)
         self.manifest: Dict[str, Any] = {}
         self.report: Optional[ValidationReport] = None
-    
+
     def _discover_manifest(self, explicit_path: Optional[str]) -> Optional[Path]:
         if explicit_path:
-            p = Path(explicit_path).resolve()
-            return p if p.exists() else None
-        
-        for name in self.MANIFEST_NAMES:
+            p = Path(explicit_path)
+            if not p.is_absolute():
+                p = self.repo_path / p
+            p = p.resolve()
+            return p if p.is_file() else None
+
+        for name in MANIFEST_NAMES:
             p = self.repo_path / name
-            if p.exists():
-                return p
+            if p.is_file():
+                return p.resolve()
         return None
-    
+
     def validate(self) -> ValidationReport:
         self.report = ValidationReport(
             repo_path=str(self.repo_path),
             manifest_path=str(self.manifest_path) if self.manifest_path else None,
-            manifest_found=False
+            manifest_found=False,
         )
-        
+
         if not self.manifest_path:
             self.report.add(Violation(
                 level="notice",
                 category="missing",
                 path=str(self.repo_path),
                 message="No architecture manifest found. Guard is dormant.",
-                suggestion="Create repo-guard.json to activate validation."
+                suggestion="Create repo-guard.json to activate validation.",
             ))
             return self.report
-        
+
         if not self._load_manifest():
             return self.report
-        
+
         self.report.manifest_found = True
         self.report.repo_id = self.manifest.get("repo_id")
         self.report.repo_type = self.manifest.get("repo_type")
-        
+        self.report.manifest = self.manifest
+
         self._validate_structure()
         self._find_stray_files()
         self._check_naming_conventions()
         self._check_forbidden_patterns()
-        
+
         return self.report
-    
+
     def _load_manifest(self) -> bool:
+        assert self.report is not None
         try:
-            with open(self.manifest_path, 'r') as f:
-                self.manifest = json.load(f)
+            self.manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
             return True
         except json.JSONDecodeError as e:
             self.report.add(Violation(
@@ -121,166 +143,218 @@ class ArchitectureValidator:
                 category="syntax",
                 path=str(self.manifest_path),
                 message=f"Invalid JSON in manifest: {e}",
-                suggestion="Fix JSON syntax errors."
+                suggestion="Fix JSON syntax errors.",
             ))
             return False
-    
-    def _validate_structure(self):
-        expected = self.manifest.get("expected_structure", {})
+        except OSError as e:
+            self.report.add(Violation(
+                level="error",
+                category="manifest",
+                path=str(self.manifest_path),
+                message=f"Unable to read manifest: {e}",
+                suggestion="Verify path and permissions.",
+            ))
+            return False
+
+    def _validate_structure(self) -> None:
+        expected = self.manifest.get("expected_structure", {}) or {}
         for expected_path, rules in expected.items():
             full_path = self.repo_path / expected_path
-            required = rules.get("required", False)
-            
+            required = bool((rules or {}).get("required", False))
+
             if required and not full_path.exists():
                 self.report.add(Violation(
                     level="error",
                     category="missing",
                     path=expected_path,
                     message=f"Required path missing: {expected_path}",
-                    suggestion=f"Create {expected_path} or set required: false."
+                    suggestion=f"Create {expected_path} or set required: false.",
                 ))
-            
-            if full_path.exists() and "subdirs" in rules:
-                for subdir, subrules in rules["subdirs"].items():
+
+            if full_path.exists() and isinstance(rules, dict) and "subdirs" in rules:
+                for subdir, subrules in (rules.get("subdirs") or {}).items():
                     sub_path = full_path / subdir
-                    if subrules.get("required", False) and not sub_path.exists():
+                    if (subrules or {}).get("required", False) and not sub_path.exists():
                         self.report.add(Violation(
                             level="error",
                             category="missing",
-                            path=f"{expected_path}/{subdir}",
-                            message=f"Required subdirectory missing: {expected_path}/{subdir}"
+                            path=f"{expected_path.rstrip('/')}/{subdir}",
+                            message=f"Required subdirectory missing: {expected_path.rstrip('/')}/{subdir}",
                         ))
-    
-    def _find_stray_files(self):
-        expected = self.manifest.get("expected_structure", {})
-        expected_paths = set(expected.keys())
-        
-        # Build allowed prefixes
-        allowed_prefixes = set()
-        for ep in expected_paths:
-            allowed_prefixes.add(ep)
-            if not any(ep.endswith(ext) for ext in ['.py', '.md', '.json', '.txt', '.toml', '.yml', '.yaml']):
-                allowed_prefixes.add(ep.rstrip('/') + '/')
-        
-        # Always allow these
-        allowed_prefixes.update([
-            '.git/', '.github/', 'review_needed/', 'legacy/',
-            '__pycache__/', '.pytest_cache/', '.venv/', 'venv/',
-            'repo-guard.json', 'stegverse.architecture.json', 'architecture.json'
-        ])
-        
+
+    def _allowed_prefixes(self) -> set:
+        expected = self.manifest.get("expected_structure", {}) or {}
+        allowed = set()
+
+        for ep in expected:
+            ep = str(ep)
+            allowed.add(ep)
+            suffix = Path(ep).suffix.lower()
+            if not suffix:
+                allowed.add(ep.rstrip("/") + "/")
+
+        allowed.update({
+            "repo-guard.json",
+            "stegverse.architecture.json",
+            "architecture.json",
+            ".architecture.json",
+            "review_needed/",
+            "legacy/",
+            "__pycache__/",
+            ".pytest_cache/",
+            ".venv/",
+            "venv/",
+            "node_modules/",
+        })
+        return allowed
+
+    def _find_stray_files(self) -> None:
+        allowed_prefixes = self._allowed_prefixes()
+
         for root, dirs, files in os.walk(self.repo_path):
+            dirs[:] = [
+                d for d in dirs
+                if d not in ("review_needed", "legacy", "__pycache__", "node_modules", ".venv", "venv")
+                and not d.startswith(".")
+            ]
+
             rel_root = Path(root).relative_to(self.repo_path)
-            
-            # Skip hidden and system dirs
-            dirs[:] = [d for d in dirs if not d.startswith('.') 
-                       and d not in ('review_needed', 'legacy', '__pycache__', 
-                                     'node_modules', '.venv', 'venv')]
-            
-            for file in files:
-                if file.startswith('.'):
+            for name in files:
+                if name.startswith("."):
                     continue
-                
-                file_rel = str(rel_root / file) if str(rel_root) != '.' else file
-                
+
+                rel = str(rel_root / name) if str(rel_root) != "." else name
                 is_allowed = any(
-                    file_rel == allowed or file_rel.startswith(allowed.rstrip('/') + '/')
+                    rel == allowed.rstrip("/")
+                    or rel.startswith(allowed.rstrip("/") + "/")
                     for allowed in allowed_prefixes
                 )
-                
+
                 if not is_allowed:
                     self.report.add(Violation(
                         level="warning",
                         category="stray",
-                        path=file_rel,
-                        message=f"File not in expected structure: {file_rel}",
-                        suggestion="Move to proper directory or add to manifest."
+                        path=rel,
+                        message=f"File not in expected structure: {rel}",
+                        suggestion="Move to proper directory or add to manifest.",
                     ))
-    
-    def _check_naming_conventions(self):
-        syntax_patterns = self.manifest.get("migration_rules", {}).get("syntax_issue_patterns", [])
-        
+
+    def _check_naming_conventions(self) -> None:
+        patterns = self.manifest.get("migration_rules", {}).get("syntax_issue_patterns", []) or []
+        compiled = []
+        for pattern in patterns:
+            try:
+                compiled.append(re.compile(pattern))
+            except re.error as e:
+                self.report.add(Violation(
+                    level="error",
+                    category="manifest",
+                    path="migration_rules.syntax_issue_patterns",
+                    message=f"Invalid regex {pattern!r}: {e}",
+                    suggestion="Fix or remove the invalid regex.",
+                ))
+
+        if not compiled:
+            return
+
         for root, dirs, files in os.walk(self.repo_path):
-            dirs[:] = [d for d in dirs if not d.startswith('.') 
-                       and d not in ('review_needed', 'legacy', '__pycache__')]
-            
+            dirs[:] = [
+                d for d in dirs
+                if d not in ("review_needed", "legacy", "__pycache__", "node_modules", ".venv", "venv")
+                and not d.startswith(".")
+            ]
+
             for name in files + dirs:
-                for pattern in syntax_patterns:
-                    if re.match(pattern, name):
-                        rel_path = str(Path(root).relative_to(self.repo_path) / name)
-                        self.report.add(Violation(
-                            level="warning",
-                            category="syntax",
-                            path=rel_path,
-                            message=f"Syntax issue in name: {name}",
-                            suggestion="Use only a-z, 0-9, _, -, . in file names."
-                        ))
-    
-    def _check_forbidden_patterns(self):
-        forbidden = self.manifest.get("file_rules", {}).get("forbidden_patterns", [])
-        
+                if any(pattern.match(name) for pattern in compiled):
+                    rel = Path(root).relative_to(self.repo_path) / name
+                    self.report.add(Violation(
+                        level="warning",
+                        category="syntax",
+                        path=rel.as_posix(),
+                        message=f"Syntax issue in name: {name}",
+                        suggestion="Use only a-z, 0-9, _, -, . in file names.",
+                    ))
+
+    def _check_forbidden_patterns(self) -> None:
+        patterns = self.manifest.get("file_rules", {}).get("forbidden_patterns", []) or []
+        compiled = []
+        for pattern in patterns:
+            try:
+                compiled.append(re.compile(pattern, re.IGNORECASE))
+            except re.error as e:
+                self.report.add(Violation(
+                    level="error",
+                    category="manifest",
+                    path="file_rules.forbidden_patterns",
+                    message=f"Invalid regex {pattern!r}: {e}",
+                    suggestion="Fix or remove the invalid regex.",
+                ))
+
+        if not compiled:
+            return
+
         for root, dirs, files in os.walk(self.repo_path):
-            dirs[:] = [d for d in dirs if not d.startswith('.')]
-            
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            rel_root = Path(root).relative_to(self.repo_path)
+
             for name in files:
-                for pattern in forbidden:
-                    if re.match(pattern, name, re.IGNORECASE):
-                        rel_path = str(Path(root).relative_to(self.repo_path) / name)
-                        self.report.add(Violation(
-                            level="error",
-                            category="forbidden",
-                            path=rel_path,
-                            message=f"Forbidden pattern matched: {name}",
-                            suggestion="Rename file to remove forbidden pattern."
-                        ))
+                if any(pattern.match(name) for pattern in compiled):
+                    rel = rel_root / name if str(rel_root) != "." else Path(name)
+                    self.report.add(Violation(
+                        level="error",
+                        category="forbidden",
+                        path=rel.as_posix(),
+                        message=f"Forbidden pattern matched: {name}",
+                        suggestion="Remove, rename, or move the file outside committed repo state.",
+                    ))
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(description="Repo Guard — manifest-driven architecture validator")
     parser.add_argument("--repo", default=".", help="Path to repository root")
-    parser.add_argument("--manifest", help="Explicit path to manifest (auto-discovered if omitted)")
-    parser.add_argument("--output", default="architecture-report.json", help="Output report file")
-    parser.add_argument("--fail-on-drift", action="store_true", help="Exit error if violations found")
+    parser.add_argument("--manifest", help="Explicit path to manifest; auto-discovered if omitted")
+    parser.add_argument("--output", default="repo-guard-report.json", help="Output report file")
+    parser.add_argument("--fail-on-drift", action="store_true", help="Exit with error if error-level violations are found")
     parser.add_argument("--format", choices=["json", "pretty"], default="pretty", help="Output format")
-    
+
     args = parser.parse_args()
-    
+
     validator = ArchitectureValidator(args.repo, args.manifest)
     report = validator.validate()
-    
-    # Output
+
     if args.format == "json":
         print(report.to_json())
     else:
-        print(f"\n{'='*60}")
-        print(f"Repo Guard")
-        print(f"{'='*60}")
+        print(f"\n{'=' * 60}")
+        print("Repo Guard")
+        print(f"{'=' * 60}")
         print(f"Repo: {report.repo_path}")
         print(f"Manifest: {report.manifest_path or 'NOT FOUND'}")
         print(f"Status: {'ACTIVE' if report.manifest_found else 'DORMANT'}")
         if report.repo_id:
             print(f"Repo ID: {report.repo_id} ({report.repo_type})")
-        print(f"Violations: {report.summary['errors']} errors, "
-              f"{report.summary['warnings']} warnings, "
-              f"{report.summary['notices']} notices")
-        print(f"{'='*60}")
-        
-        if report.violations:
-            for v in report.violations:
-                icon = "🔴" if v.level == "error" else "🟡" if v.level == "warning" else "🔵"
-                print(f"\n{icon} [{v.level.upper()}] {v.category}: {v.path}")
-                print(f"   {v.message}")
-                if v.suggestion:
-                    print(f"   💡 {v.suggestion}")
-    
-    # Write report
-    with open(args.output, 'w') as f:
-        f.write(report.to_json())
-    
-    if args.fail_on_drift and report.summary["errors"] > 0:
-        sys.exit(1)
-    sys.exit(0)
+        print(
+            f"Violations: {report.summary.get('errors', 0)} errors, "
+            f"{report.summary.get('warnings', 0)} warnings, "
+            f"{report.summary.get('notices', 0)} notices"
+        )
+        print(f"{'=' * 60}")
+
+        for v in report.violations:
+            icon = "ERROR" if v.level == "error" else "WARN" if v.level == "warning" else "INFO"
+            print(f"\n[{icon}] {v.category}: {v.path}")
+            print(f"  {v.message}")
+            if v.suggestion:
+                print(f"  Suggestion: {v.suggestion}")
+
+    output = Path(args.output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(report.to_json() + "\n", encoding="utf-8")
+
+    if args.fail_on_drift and report.summary.get("errors", 0) > 0:
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
