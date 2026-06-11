@@ -1,0 +1,55 @@
+name: Self Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  guard-self-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Clean repo should PASS
+        run: |
+          tmp=$(mktemp -d)
+          mkdir -p "$tmp/src" "$tmp/tests"
+          cp examples/repo-guard.json "$tmp/repo-guard.json"
+          echo "x" > "$tmp/src/app.py"
+          echo "def test(): pass" > "$tmp/tests/test_app.py"
+          echo "# r" > "$tmp/README.md"
+          python src/repo_guard.py --repo "$tmp" --fail-on-drift
+          echo "clean repo passed (exit 0) ✓"
+
+      - name: Secret file should FAIL the gate
+        run: |
+          tmp=$(mktemp -d)
+          mkdir -p "$tmp/src" "$tmp/tests"
+          cp examples/repo-guard.json "$tmp/repo-guard.json"
+          echo "x" > "$tmp/src/app.py"
+          echo "def test(): pass" > "$tmp/tests/test_app.py"
+          echo "# r" > "$tmp/README.md"
+          echo "SECRET=1" > "$tmp/api_secret.txt"
+          if python src/repo_guard.py --repo "$tmp" --fail-on-drift; then
+            echo "ERROR: gate did not fail on a secret file" >&2
+            exit 1
+          fi
+          echo "secret file correctly failed the gate (exit 1) ✓"
+
+      - name: Snapshot must exclude secrets from archive
+        run: |
+          tmp=$(mktemp -d)
+          mkdir -p "$tmp/src"
+          cp examples/repo-guard.json "$tmp/repo-guard.json"
+          echo "code" > "$tmp/src/app.py"
+          echo "LEAKME=topsecret" > "$tmp/api_secret.txt"
+          python src/repo_guard_snapshot.py --repo "$tmp" --out "$tmp/snap" --archive
+          if zcat "$tmp/snap.tar.gz" | grep -aq "LEAKME"; then
+            echo "ERROR: secret value found in snapshot archive" >&2
+            exit 1
+          fi
+          echo "snapshot archive excluded the secret ✓"
