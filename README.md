@@ -37,6 +37,25 @@ opt-in, per repo.
 python src/code_admit_gate.py --repo . --fail-on-drift
 ```
 
+## Usage Snippet
+
+Code Admit Gate validates declared code actions before they enter the AdmittedCode governance pipeline.
+
+```bash
+python -m pip install -e .
+python -m pytest
+code-admit-gate check \
+  --repo . \
+  --manifest examples/action-manifest.json \
+  --out reports/admission-report.json
+```
+
+See:
+
+```text
+docs/USAGE.md
+```
+
 ## What it checks
 
 |Check                                   |Severity|Blocks build?|
@@ -105,7 +124,7 @@ transmitted anywhere.
   pair it with a content scanner for defense in depth).
 - Not a hosted service. Everything runs in your CI; nothing leaves your repo.
 
-## StegVerse governance posture
+## Governance posture
 
 Code Admit Gate is a repo-local structural guard. It does not replace TV/TVC, StegCore, or StegCGE.
 
