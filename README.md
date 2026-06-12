@@ -1,7 +1,7 @@
-# Repo Guard
+# Code Admit Gate
 
 Manifest-driven architecture validation for any repository. Declare what your
-repo’s structure *should* be in one file; Repo Guard enforces it in CI — blocking
+repo’s structure *should* be in one file; Code Admit Gate enforces it in CI — blocking
 forbidden files (secrets, keys, env files), catching structural drift, and
 generating repair plans. No dependencies, no service, no telemetry. Python 3.8+
 stdlib only.
@@ -10,14 +10,14 @@ stdlib only.
 
 Repos rot. Files land in the wrong place, secrets get committed, structure
 drifts from what the team agreed on, and nobody notices until it’s a problem.
-Most linters check *code*. Repo Guard checks *structure* — the layer above the
+Most linters check *code*. Code Admit Gate checks *structure* — the layer above the
 code that no existing tool governs well, especially across many repos.
 
 ## How it works
 
 1. Add a `repo-guard.json` manifest to your repo root (see `examples/`).
 1. Add the GitHub Action (or run the CLI in any CI).
-1. On every push/PR, Repo Guard validates structure and **fails the build** if
+1. On every push/PR, Code Admit Gate validates structure and **fails the build** if
    error-level violations are found (e.g. a committed secret).
 
 If no manifest exists, the guard is **dormant** — it does nothing. Governance is
@@ -26,7 +26,7 @@ opt-in, per repo.
 ## Quick start (GitHub Action)
 
 ```yaml
-- uses: your-org/repo-guard@v1
+- uses: AdmittedCode/code-admit-gate@v1
   with:
     fail-on-drift: true
 ```
@@ -34,7 +34,7 @@ opt-in, per repo.
 ## Quick start (CLI, any platform)
 
 ```bash
-python src/repo_guard.py --repo . --fail-on-drift
+python src/code_admit_gate.py --repo . --fail-on-drift
 ```
 
 ## What it checks
@@ -55,8 +55,8 @@ When violations are found, generate a structured, approval-gated repair plan
 (it never moves files without an approved plan):
 
 ```bash
-python src/repo_guard.py --repo . --output report.json
-python src/repo_guard_repair.py --report report.json --plan-only
+python src/code_admit_gate.py --repo . --output report.json
+python src/code_admit_gate_repair.py --report report.json --plan-only
 ```
 
 ## Manifest
@@ -72,17 +72,17 @@ Before any repair or cleanup, capture a recoverable checkpoint:
 
 ```bash
 # manifest only (paths + hashes; contains no file contents)
-python src/repo_guard_snapshot.py --repo . --out .repo-guard/snap
+python src/code_admit_gate_snapshot.py --repo . --out .code-admit-gate/snap
 
 # manifest + restorable archive
-python src/repo_guard_snapshot.py --repo . --out .repo-guard/snap --archive
+python src/code_admit_gate_snapshot.py --repo . --out .code-admit-gate/snap --archive
 ```
 
 Verify or restore later:
 
 ```bash
-python src/repo_guard_snapshot.py --restore .repo-guard/snap.tar.gz --repo . --verify-only
-python src/repo_guard_snapshot.py --restore .repo-guard/snap.tar.gz --repo .
+python src/code_admit_gate_snapshot.py --restore .code-admit-gate/snap.tar.gz --repo . --verify-only
+python src/code_admit_gate_snapshot.py --restore .code-admit-gate/snap.tar.gz --repo .
 ```
 
 **Secret safety:** files matching `forbidden_patterns` (secrets, keys, .env) are
@@ -100,21 +100,21 @@ transmitted anywhere.
 
 ## What it is not
 
-- Not a code linter (use ruff/eslint for that — Repo Guard governs structure).
+- Not a code linter (use ruff/eslint for that — Code Admit Gate governs structure).
 - Not a secret *scanner* of file contents (it blocks secret-shaped *paths*;
   pair it with a content scanner for defense in depth).
 - Not a hosted service. Everything runs in your CI; nothing leaves your repo.
 
 ## StegVerse governance posture
 
-Repo Guard is a repo-local structural guard. It does not replace TV/TVC, StegCore, or StegCGE.
+Code Admit Gate is a repo-local structural guard. It does not replace TV/TVC, StegCore, or StegCGE.
 
 - Repos declare expected structure and forbidden path patterns through `repo-guard.json`.
 - TV/TVC provides authority and evidence for governed secret or capability access.
 - StegCore answers whether an action is permitted under policy.
 - StegCGE, once installed, should route and enforce ALLOW, DENY, FAIL-CLOSED, QUARANTINE, or escalation outcomes.
 
-Repo Guard can be used during pre-governance bootstrap cleanup and later as a governed repo health check.
+Code Admit Gate can be used during pre-governance bootstrap cleanup and later as a governed repo health check.
 
 ## License
 

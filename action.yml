@@ -1,6 +1,6 @@
-name: "Repo Guard"
+name: "Code Admit Gate"
 description: "Manifest-driven architecture validation: enforce structure, block forbidden patterns, detect drift. No dependencies."
-author: "Repo Guard"
+author: "Code Admit Gate"
 branding:
   icon: "shield"
   color: "blue"
@@ -25,7 +25,7 @@ inputs:
   report-path:
     description: "Where to write the JSON report artifact."
     required: false
-    default: "repo-guard-report.json"
+    default: "code-admit-gate-report.json"
 
 outputs:
   errors:
@@ -46,15 +46,15 @@ runs:
       with:
         python-version: "3.11"
 
-    - name: Run Repo Guard
+    - name: Run Code Admit Gate
       id: guard
       shell: bash
       run: |
         set -o pipefail
 
-        GUARD="${{ github.action_path }}/src/repo_guard.py"
+        GUARD="${{ github.action_path }}/src/code_admit_gate.py"
         if [ ! -f "$GUARD" ]; then
-          echo "Repo Guard validator not found at $GUARD" >&2
+          echo "Code Admit Gate validator not found at $GUARD" >&2
           exit 2
         fi
 
