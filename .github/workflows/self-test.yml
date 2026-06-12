@@ -18,23 +18,23 @@ jobs:
         run: |
           tmp=$(mktemp -d)
           mkdir -p "$tmp/src" "$tmp/tests"
-          cp examples/repo-guard.json "$tmp/repo-guard.json"
+          cp examples/code-admit-gate.json "$tmp/code-admit-gate.json"
           echo "x" > "$tmp/src/app.py"
           echo "def test(): pass" > "$tmp/tests/test_app.py"
           echo "# r" > "$tmp/README.md"
-          python src/repo_guard.py --repo "$tmp" --fail-on-drift
+          python src/code_admit_gate.py --repo "$tmp" --fail-on-drift
           echo "clean repo passed (exit 0) ✓"
 
       - name: Secret file should FAIL the gate
         run: |
           tmp=$(mktemp -d)
           mkdir -p "$tmp/src" "$tmp/tests"
-          cp examples/repo-guard.json "$tmp/repo-guard.json"
+          cp examples/code-admit-gate.json "$tmp/code-admit-gate.json"
           echo "x" > "$tmp/src/app.py"
           echo "def test(): pass" > "$tmp/tests/test_app.py"
           echo "# r" > "$tmp/README.md"
           echo "SECRET=1" > "$tmp/api_secret.txt"
-          if python src/repo_guard.py --repo "$tmp" --fail-on-drift; then
+          if python src/code_admit_gate.py --repo "$tmp" --fail-on-drift; then
             echo "ERROR: gate did not fail on a secret file" >&2
             exit 1
           fi
@@ -44,10 +44,10 @@ jobs:
         run: |
           tmp=$(mktemp -d)
           mkdir -p "$tmp/src"
-          cp examples/repo-guard.json "$tmp/repo-guard.json"
+          cp examples/code-admit-gate.json "$tmp/code-admit-gate.json"
           echo "code" > "$tmp/src/app.py"
           echo "LEAKME=topsecret" > "$tmp/api_secret.txt"
-          python src/repo_guard_snapshot.py --repo "$tmp" --out "$tmp/snap" --archive
+          python src/code_admit_gate_snapshot.py --repo "$tmp" --out "$tmp/snap" --archive
           if zcat "$tmp/snap.tar.gz" | grep -aq "LEAKME"; then
             echo "ERROR: secret value found in snapshot archive" >&2
             exit 1
