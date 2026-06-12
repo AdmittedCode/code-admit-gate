@@ -1,0 +1,30 @@
+{
+  "schema": "admittedcode.action_manifest.v1",
+  "action_id": "demo-readme-update",
+  "repo_role": "provider-harness",
+  "declared_action": "update_readme_usage_section",
+  "scope": {
+    "allowed_paths": [
+      "README.md",
+      "docs/**",
+      "examples/**",
+      ".github/workflows/provider-harness-ci.yml"
+    ],
+    "forbidden_paths": [
+      ".env",
+      "secrets/**",
+      "*.pem",
+      "*.key",
+      "__pycache__/**",
+      "*.pyc"
+    ]
+  },
+  "requires": {
+    "coherency_scan": true,
+    "admissibility_receipt": true,
+    "provider_harness": false
+  },
+  "outputs": {
+    "report": "reports/admission-report.json"
+  }
+}
